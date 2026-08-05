@@ -78,6 +78,7 @@ class MainActivity : AppCompatActivity() {
                     onStartPerception = ::requestPerceptionPermissionsThenStart,
                     onStopPerception = perceptionViewModel::stopPerception,
                     onDebugCapture = perceptionViewModel::captureNow,
+                    onSendPhotoMqtt = sensorViewModel::publishCurrentPhoto,
                     onUpdateMqttConfig = sensorViewModel::updateMqttConfig,
                     onOpenSetupGuide = { showSetupGuide = true },
                 )
