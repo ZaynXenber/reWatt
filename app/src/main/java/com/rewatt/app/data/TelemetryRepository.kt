@@ -18,33 +18,14 @@ import kotlinx.coroutines.launch
 
 class TelemetryRepository(
     private val telemetryDao: TelemetryDao,
-    private val firebaseSyncRepository: FirebaseSyncRepository,
-    private val geminiActivityAnalyzer: GeminiActivityAnalyzer,
 ) {
     private val mutableState = MutableStateFlow(SensorDashboardState())
-    val dashboardState: StateFlow<SensorDashboardState> = mutableState.asStateFlow()
-    private val analysisScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var analysisJob: Job? = null
-    private var lastAnalysisKey: String? = null
+    val telemetryState: StateFlow<SensorDashboardState> = mutableState.asStateFlow()
     private val freshness = TelemetryFreshness()
 
     /** True only when the USB mmWave sensor sent a packet within the freshness window (~30s). */
     fun isTelemetryFresh(nowMillis: Long = System.currentTimeMillis()): Boolean =
         freshness.evaluate(mutableState.value.lastValidPacketAtMillis, nowMillis) == PacketFreshness.Fresh
-
-    /** Sensor side: publish the current energy-waste state to Firestore so Admin phones can alert. */
-    fun publishEnergyAlertState(wasteful: Boolean, personCount: Int, lightsOn: Boolean?) {
-        firebaseSyncRepository.publishEnergyAlert(wasteful, personCount, lightsOn)
-    }
-
-    /** Admin side: live cross-device energy-waste signal for [roomId]. */
-    fun energyAlertFlow(roomId: String): Flow<EnergyAlertSignal?> =
-        firebaseSyncRepository.energyAlertFlow(roomId)
-
-    /** Admin side: log that a NOW-action recommendation was carried out (Done pressed). */
-    fun recordNowActionDone(signature: String) {
-        firebaseSyncRepository.recordNowActionDone(signature)
-    }
 
     // Throttle markers (Volatile: packets are processed on concurrent coroutines, one per serial line;
     // an occasional race just means one extra emit/insert, which is harmless).
@@ -105,118 +86,8 @@ class TelemetryRepository(
         }
     }
 
-    val recentCapturesFlow: StateFlow<List<RecentCapture>> =
-        firebaseSyncRepository.recentCapturesFlow
-
-    val nodeId: String get() = firebaseSyncRepository.nodeId
-
-    fun listenToHall(roomId: String): Flow<HallSnapshot?> =
-        firebaseSyncRepository.listenToHall(roomId)
-
-    fun listenToHallNodes(roomId: String): Flow<List<SensorNodeSnapshot>> =
-        firebaseSyncRepository.listenToHallNodes(roomId)
-
-    suspend fun fetchHallNodes(roomId: String): List<SensorNodeSnapshot> =
-        firebaseSyncRepository.fetchHallNodes(roomId)
-
-    fun hallScheduleFlow(hallLabel: String): Flow<Array<IntArray>> =
-        firebaseSyncRepository.hallScheduleFlow(hallLabel)
-
-    fun hallMeanScheduleFlow(hallLabel: String): Flow<Array<IntArray>> =
-        firebaseSyncRepository.hallMeanScheduleFlow(hallLabel)
-
-    fun hallMinuteScheduleFlow(hallLabel: String): Flow<Array<IntArray>> =
-        firebaseSyncRepository.hallMinuteScheduleFlow(hallLabel)
-
-    fun learnedScheduleFlow(hallLabel: String): Flow<List<List<LearnedSegment>>> =
-        firebaseSyncRepository.learnedScheduleFlow(hallLabel)
-
-    fun wasteSummaryFlow(): Flow<EnergyWasteSummary?> =
-        firebaseSyncRepository.wasteSummaryFlow()
-
-    suspend fun loadHallSchedule(hallLabel: String): Array<IntArray> =
-        firebaseSyncRepository.loadHallSchedule(hallLabel)
-
     fun updatePerceptionSummary(perceptionSummary: PerceptionSyncSummary) {
-        val latestTelemetry = mutableState.value.latestTelemetry
-        val enrichedSummary = perceptionSummary.copy(
-            temperatureC = latestTelemetry?.temperatureC,
-            humidityPercent = latestTelemetry?.humidityPercent,
-        )
-        firebaseSyncRepository.syncPerceptionSummary(
-            perceptionSummary = enrichedSummary,
-            onState = ::setFirebaseSyncState,
-        )
-        analyzeActivity(enrichedSummary)
-    }
-
-    private fun setFirebaseSyncState(syncState: FirebaseSyncState) {
-        mutableState.update { current ->
-            current.copy(firebaseSyncState = syncState)
-        }
-    }
-
-    private fun analyzeActivity(summary: PerceptionSyncSummary) {
-        // Camera-only trigger: run once per distinct capture (no dependency on audio labels).
-        val capturedAtMillis = summary.capturedAtMillis ?: return
-
-        val analysisKey = listOf(
-            capturedAtMillis,
-            summary.personCount,
-            summary.temperatureC,
-            summary.humidityPercent,
-        ).joinToString(separator = "::")
-        if (analysisKey == lastAnalysisKey) return
-        lastAnalysisKey = analysisKey
-
-        if (!geminiActivityAnalyzer.isConfigured()) {
-            mutableState.update { current ->
-                current.copy(
-                    activityAnalysisState = ActivityAnalysisState(
-                        status = ActivityAnalysisStatus.ConfigMissing,
-                        message = "Gemini API key missing. Add GEMINI_API_KEY to local.properties and rebuild.",
-                    ),
-                )
-            }
-            return
-        }
-
-        analysisJob?.cancel()
-        mutableState.update { current ->
-            current.copy(
-                activityAnalysisState = ActivityAnalysisState(
-                    status = ActivityAnalysisStatus.Pending,
-                    message = "Gemini is analyzing current activity.",
-                ),
-            )
-        }
-
-        analysisJob = analysisScope.launch {
-            runCatching { geminiActivityAnalyzer.analyze(summary, com.rewatt.app.core.LocaleManager.promptLanguageName()) }
-                .onSuccess { analysis ->
-                    mutableState.update { current ->
-                        current.copy(
-                            activityAnalysisState = ActivityAnalysisState(
-                                status = ActivityAnalysisStatus.Complete,
-                                message = "Gemini classified this as ${analysis.activity}.",
-                                analysis = analysis,
-                                lastAnalyzedAtMillis = System.currentTimeMillis(),
-                            ),
-                        )
-                    }
-                    firebaseSyncRepository.syncActivityAnalysis(summary, analysis)
-                }
-                .onFailure { error ->
-                    mutableState.update { current ->
-                        current.copy(
-                            activityAnalysisState = ActivityAnalysisState(
-                                status = ActivityAnalysisStatus.Failed,
-                                message = "Gemini analysis failed: ${error.message ?: error::class.java.simpleName}",
-                            ),
-                        )
-                    }
-                }
-        }
+        // Perception summary updated locally
     }
 
     companion object {

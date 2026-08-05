@@ -70,6 +70,21 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    packaging {
+        resources {
+            excludes += listOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/license.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/notice.txt",
+            )
+        }
+    }
 }
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
@@ -124,6 +139,7 @@ dependencies {
     implementation(libs.firebase.auth)
 
     implementation(libs.usb.serial.android)
+    implementation(libs.hivemq.mqtt.client)
     implementation(libs.androidx.work.runtime.ktx)
 
     testImplementation(libs.junit)
