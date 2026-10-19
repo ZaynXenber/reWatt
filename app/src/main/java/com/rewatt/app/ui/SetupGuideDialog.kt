@@ -4,12 +4,17 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.ImageDecoder
 import android.net.Uri
-import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -23,23 +28,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -47,39 +53,32 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import com.rewatt.app.R
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import android.graphics.ImageDecoder
-import androidx.compose.foundation.Image
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.runtime.produceState
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.rewatt.app.R
 
 private const val TOTAL_STEPS = 6
 
@@ -102,50 +101,62 @@ fun SetupGuideDialog(onDismiss: (spaceName: String?, capacity: Int?) -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
+                .background(Color(0xFFF9FAFB)),
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
             ) {
-                // Header
+                // Header (Google Stitch Style)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(stringResource(R.string.setup_title), fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                    TextButton(onClick = { onDismiss(null, null) }) { Text(stringResource(R.string.setup_skip)) }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(R.drawable.ic_app_logo),
+                            contentDescription = "ReWatt Logo",
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = "ReWatt Setup",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                            color = Color(0xFF09090B),
+                        )
+                    }
+
+                    TextButton(onClick = { onDismiss(null, null) }) {
+                        Text("Skip", fontWeight = FontWeight.Bold, color = Color(0xFF6B7280), fontSize = 14.sp)
+                    }
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
 
-                // Progress dots
+                // Progress Step Badges
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     repeat(TOTAL_STEPS) { index ->
                         Box(
                             modifier = Modifier
-                                .size(if (index == step) 10.dp else 8.dp)
-                                .clip(CircleShape)
+                                .height(6.dp)
+                                .weight(1f)
+                                .clip(RoundedCornerShape(50))
                                 .background(
-                                    if (index <= step) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.outlineVariant,
+                                    if (index <= step) Color(0xFF09090B) else Color(0xFFE2E8F0),
                                 ),
                         )
                     }
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        stringResource(R.string.setup_step_counter, step + 1, TOTAL_STEPS),
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
 
                 // Step content (scrollable with swipe navigation)
                 Column(
@@ -169,7 +180,7 @@ fun SetupGuideDialog(onDismiss: (spaceName: String?, capacity: Int?) -> Unit) {
                                 }
                             }
                         },
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     when (step) {
                         0 -> PermissionsStep()
@@ -190,39 +201,51 @@ fun SetupGuideDialog(onDismiss: (spaceName: String?, capacity: Int?) -> Unit) {
                     isProcessingSwipe = false
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
 
-                // Navigation buttons
+                // Stitch Navigation Buttons
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .height(50.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     if (step > 0) {
                         OutlinedButton(
                             onClick = { step-- },
-                            modifier = Modifier.weight(1f),
-                        ) { Text(stringResource(R.string.setup_back)) }
-                    } else {
-                        Spacer(Modifier.weight(1f))
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF09090B)),
+                        ) {
+                            Text("Back", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        }
                     }
+
                     Button(
                         onClick = {
                             if (step < TOTAL_STEPS - 1) step++ else onDismiss(spaceName.ifBlank { null }, capacity)
                         },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF09090B), contentColor = Color.White),
                         enabled = !(step == 4 && spaceName.isBlank()),
-                    ) { Text(if (step == TOTAL_STEPS - 1) stringResource(R.string.setup_done) else stringResource(R.string.setup_next)) }
+                    ) {
+                        Text(
+                            text = if (step == TOTAL_STEPS - 1) "Done" else "Next",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-// Sequential request states so the system permission dialogs always appear in a fixed
-// order. RequestMultiplePermissions does NOT guarantee dialog order, so we chain
-// single-permission requests instead.
 private const val REQUEST_IDLE = 0
 private const val REQUEST_CAMERA = 1
 private const val REQUEST_LOCATION = 2
@@ -245,7 +268,6 @@ private fun PermissionsStep() {
         )
     }
 
-    // One launcher per permission so we can chain them in a guaranteed order.
     var requestStep by remember { mutableStateOf(REQUEST_IDLE) }
 
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -262,7 +284,6 @@ private fun PermissionsStep() {
         requestStep = REQUEST_IDLE
     }
 
-    // Drive the chain: each step launches its request, or skips ahead when already granted.
     LaunchedEffect(requestStep) {
         when (requestStep) {
             REQUEST_CAMERA ->
@@ -286,8 +307,8 @@ private fun PermissionsStep() {
     )
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFECEEEF)),
+        shape = RoundedCornerShape(20.dp),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -301,29 +322,44 @@ private fun PermissionsStep() {
     if (!cameraGranted || !locationGranted) {
         Button(
             onClick = { requestStep = REQUEST_CAMERA },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(stringResource(R.string.setup_allow_permissions)) }
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF09090B), contentColor = Color.White),
+        ) {
+            Text(stringResource(R.string.setup_allow_permissions), fontWeight = FontWeight.Bold)
+        }
     }
 }
 
 @Composable
 private fun PermissionRow(label: String, granted: Boolean) {
-    val green = Color(0xFF2E7D32)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Icon(
-            imageVector = if (granted) Icons.Default.Check else Icons.Default.Close,
-            contentDescription = null,
-            tint = if (granted) green else MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(20.dp),
-        )
-        Text(label, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(if (granted) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (granted) Icons.Default.Check else Icons.Default.Close,
+                contentDescription = null,
+                tint = if (granted) Color(0xFF15803D) else Color(0xFFB91C1C),
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF09090B), modifier = Modifier.weight(1f))
         Text(
-            text = if (granted) stringResource(R.string.setup_allowed) else stringResource(R.string.setup_not_allowed),
+            text = if (granted) "Allowed" else "Not Allowed",
             fontSize = 13.sp,
-            color = if (granted) green else MaterialTheme.colorScheme.error,
+            fontWeight = FontWeight.Bold,
+            color = if (granted) Color(0xFF15803D) else Color(0xFFB91C1C),
         )
     }
 }
@@ -333,12 +369,9 @@ private fun BatteryStep() {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-    // The real blocker on Samsung is Battery Saver (Off / Medium / Maximum). isPowerSaveMode() is true
-    // for Medium & Maximum, false only when it is Off — which is the state reWatt needs to stay alive.
     fun saverIsOff(): Boolean = !powerManager.isPowerSaveMode
 
     var saverOff by remember { mutableStateOf(saverIsOff()) }
-    // Re-check when the user returns from settings so the status updates the moment they switch it Off.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) saverOff = saverIsOff()
@@ -346,7 +379,6 @@ private fun BatteryStep() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val green = Color(0xFF2E7D32)
 
     StepHeader(
         title = stringResource(R.string.setup_s2_title),
@@ -354,34 +386,36 @@ private fun BatteryStep() {
     )
 
     Card(
-        // Short-press also flips it (demo); the real status drives the default + re-check on resume.
         onClick = { saverOff = !saverOff },
         colors = CardDefaults.cardColors(
-            containerColor = if (saverOff)
-                MaterialTheme.colorScheme.surfaceVariant
-            else
-                MaterialTheme.colorScheme.errorContainer,
+            containerColor = if (saverOff) Color(0xFFECEEEF) else Color(0xFFFEF2F2),
         ),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(20.dp),
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Icon(
-                imageVector = if (saverOff) Icons.Default.Check else Icons.Default.Close,
-                contentDescription = null,
-                tint = if (saverOff) green else MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier.size(20.dp),
-            )
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(if (saverOff) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (saverOff) Icons.Default.Check else Icons.Default.Close,
+                    contentDescription = null,
+                    tint = if (saverOff) Color(0xFF15803D) else Color(0xFFB91C1C),
+                    modifier = Modifier.size(14.dp),
+                )
+            }
             Text(
-                text = if (saverOff)
-                    stringResource(R.string.setup_batt_off)
-                else
-                    stringResource(R.string.setup_batt_on),
+                text = if (saverOff) stringResource(R.string.setup_batt_off) else stringResource(R.string.setup_batt_on),
                 fontSize = 14.sp,
-                color = if (saverOff) green else MaterialTheme.colorScheme.onErrorContainer,
+                fontWeight = FontWeight.Bold,
+                color = if (saverOff) Color(0xFF15803D) else Color(0xFFB91C1C),
             )
         }
     }
@@ -389,7 +423,6 @@ private fun BatteryStep() {
     if (!saverOff) {
         Button(
             onClick = {
-                // Jump straight to Battery Saver settings; fall back to all settings if unavailable.
                 val saverIntent = Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 if (saverIntent.resolveActivity(context.packageManager) != null) {
@@ -400,8 +433,12 @@ private fun BatteryStep() {
                     )
                 }
             },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(stringResource(R.string.setup_allow_always_on)) }
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF09090B), contentColor = Color.White),
+        ) { Text(stringResource(R.string.setup_allow_always_on), fontWeight = FontWeight.Bold) }
     }
 }
 
@@ -415,12 +452,12 @@ private fun MountStep() {
     MountPhoto()
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFECEEEF)),
+        shape = RoundedCornerShape(20.dp),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             BulletTip(stringResource(R.string.setup_s3_tip1))
             BulletTip(stringResource(R.string.setup_s3_tip2))
@@ -437,12 +474,12 @@ private fun VerifyViewStep() {
     CameraPreviewBox()
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFECEEEF)),
+        shape = RoundedCornerShape(20.dp),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             BulletTip(stringResource(R.string.setup_s4_tip1))
             BulletTip(stringResource(R.string.setup_s4_tip2))
@@ -470,6 +507,11 @@ private fun NameYourSpaceStep(
         placeholder = { Text(stringResource(R.string.setup_space_name_hint)) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = Color.White,
+            unfocusedContainerColor = Color.White,
+        ),
     )
 
     OutlinedTextField(
@@ -480,6 +522,11 @@ private fun NameYourSpaceStep(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = Color.White,
+            unfocusedContainerColor = Color.White,
+        ),
     )
 }
 
@@ -491,32 +538,32 @@ private fun DoneStep() {
     )
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFDCFCE7)),
+        shape = RoundedCornerShape(20.dp),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Icon(
                 imageVector = Icons.Default.Check,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                tint = Color(0xFF15803D),
                 modifier = Modifier.size(48.dp),
             )
             Text(
                 stringResource(R.string.setup_complete),
                 fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                fontSize = 18.sp,
+                color = Color(0xFF15803D),
             )
             Text(
                 stringResource(R.string.setup_complete_desc),
                 fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                color = Color(0xFF166534),
             )
         }
     }
@@ -524,44 +571,14 @@ private fun DoneStep() {
 
 @Composable
 private fun StepHeader(title: String, body: String? = null) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = Color(0xFF09090B))
         if (!body.isNullOrBlank()) {
             Text(
                 body,
                 fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = Color(0xFF6B7280),
                 lineHeight = 20.sp,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ImagePlaceholder(caption: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 120.dp, max = 180.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.CameraAlt,
-                contentDescription = null,
-                modifier = Modifier.size(36.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = caption,
-                fontSize = 13.sp,
-                fontStyle = FontStyle.Italic,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -573,8 +590,8 @@ private fun BulletTip(text: String) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Text("•", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(text, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("•", fontSize = 14.sp, color = Color(0xFF09090B), fontWeight = FontWeight.Bold)
+        Text(text, fontSize = 13.sp, color = Color(0xFF374151))
     }
 }
 
@@ -594,7 +611,6 @@ private fun MountPhoto() {
             val bitmap = ImageDecoder.decodeBitmap(source)
             value = bitmap.asImageBitmap()
         } catch (e: Exception) {
-            // Fallback to placeholder if image fails to load
             value = null
         }
     }
@@ -606,11 +622,20 @@ private fun MountPhoto() {
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 200.dp)
-                .clip(RoundedCornerShape(12.dp)),
-            contentScale = ContentScale.Crop
+                .clip(RoundedCornerShape(20.dp)),
+            contentScale = ContentScale.Crop,
         )
     } else {
-        ImagePlaceholder("Loading mount photo...")
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0xFFECEEEF)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Outlined.CameraAlt, contentDescription = null, tint = Color(0xFF9CA3AF), modifier = Modifier.size(36.dp))
+        }
     }
 }
 
@@ -622,16 +647,15 @@ private fun CameraPreviewBox() {
     var cameraError by remember { mutableStateOf<String?>(null) }
     
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
+        contract = ActivityResultContracts.RequestPermission(),
     ) { isGranted ->
         hasCameraPermission = isGranted
     }
     
-    // Check camera permission and request if needed
     LaunchedEffect(Unit) {
         val hasPermission = ContextCompat.checkSelfPermission(
             context,
-            Manifest.permission.CAMERA
+            Manifest.permission.CAMERA,
         ) == PackageManager.PERMISSION_GRANTED
         
         if (hasPermission) {
@@ -642,49 +666,42 @@ private fun CameraPreviewBox() {
     }
     
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFECEEEF)),
+        shape = RoundedCornerShape(20.dp),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(16.dp),
         ) {
             if (hasCameraPermission) {
                 if (cameraError != null) {
-                    ImagePlaceholder("Camera Error: ${cameraError}")
+                    Text("Camera Error: $cameraError", fontSize = 13.sp, color = Color(0xFFEF4444))
                 } else {
                     AndroidView(
                         factory = { ctx ->
                             PreviewView(ctx).apply {
                                 scaleType = PreviewView.ScaleType.FILL_CENTER
-                                
-                                // Bind camera with delay to ensure lifecycle is ready
                                 post {
                                     try {
                                         val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                                         cameraProviderFuture.addListener({
                                             try {
                                                 val cameraProvider = cameraProviderFuture.get()
-                                                
-                                                // Check if camera is available
                                                 val availableCameras = cameraProvider.availableCameraInfos
                                                 if (availableCameras.isEmpty()) {
                                                     cameraError = "No cameras available"
                                                     return@addListener
                                                 }
-                                                
                                                 val preview = Preview.Builder().build().also {
                                                     it.surfaceProvider = surfaceProvider
                                                 }
-                                                
                                                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-                                                
                                                 cameraProvider.unbindAll()
                                                 cameraProvider.bindToLifecycle(
                                                     lifecycleOwner,
                                                     cameraSelector,
-                                                    preview
+                                                    preview,
                                                 )
                                             } catch (e: Exception) {
                                                 cameraError = e.message ?: "Camera binding failed"
@@ -699,12 +716,12 @@ private fun CameraPreviewBox() {
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 160.dp, max = 240.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.Black)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.Black),
                     )
                 }
             } else {
-                ImagePlaceholder("Requesting camera access...")
+                Text("Requesting camera access...", fontSize = 13.sp, color = Color(0xFF6B7280))
             }
         }
     }

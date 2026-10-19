@@ -80,6 +80,7 @@ class MainActivity : AppCompatActivity() {
                     onDebugCapture = perceptionViewModel::captureNow,
                     onSendPhotoMqtt = sensorViewModel::publishCurrentPhoto,
                     onUpdateMqttConfig = sensorViewModel::updateMqttConfig,
+                    onToggleDemoMode = sensorViewModel::toggleDemoMode,
                     onOpenSetupGuide = { showSetupGuide = true },
                 )
 

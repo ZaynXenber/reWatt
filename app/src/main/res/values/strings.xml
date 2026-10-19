@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">REWATT</string>
+    <string name="app_name">ReWatt</string>
     <string name="usb_notification_channel">Sensor link</string>
-    <string name="usb_notification_title">REWATT sensor link active</string>
+    <string name="usb_notification_title">ReWatt sensor link active</string>
     <string name="usb_notification_text">Listening for ESP32-C6 telemetry over USB.</string>
     <string name="perception_notification_channel">Background capture</string>
-    <string name="perception_notification_title">REWATT is monitoring this room</string>
+    <string name="perception_notification_title">ReWatt is monitoring this room</string>
     <string name="perception_notification_text">Capturing one frame every 10 minutes to track occupancy and energy use.</string>
     <string name="energy_alert_channel">Energy reminders</string>
     <string name="energy_alert_title">Lights still on in an empty room</string>

@@ -21,22 +21,20 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * Captures and analyzes a single JPEG frame on demand. Unlike a live-preview camera, the camera is
- * bound to the lifecycle only for the duration of one capture and unbound immediately after, so the
- * sensor powers down between the 10-minute marks. Capture timing is driven externally by
- * [CameraCaptureService]'s exact alarm — this class no longer schedules itself.
+ * Manages on-demand camera frame capture. Unlocks captureInFlight immediately upon frame decoding (~30ms)
+ * and runs slow YOLO model detection asynchronously so repeated Test Captures are ultra-fast and never blocked.
  */
 class CameraCaptureController(
     private val context: Context,
     private val yoloDetectorProvider: () -> YoloDetector?,
-    // Publishes the decoded, upright frame immediately so the UI shows it without waiting for the
-    // slow tiled YOLO pass. Detection results arrive later via [onFrameAnalyzed].
     private val onFramePreview: (Bitmap, ExposureReading?, String) -> Unit,
     private val onFrameAnalyzed: (Bitmap?, List<ObjectDetection>, String, ExposureReading?, String) -> Unit,
     private val onError: (String) -> Unit,
 ) : Closeable {
-    private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val analysisExecutor: ExecutorService = Executors.newFixedThreadPool(2)
     private var lifecycleOwner: LifecycleOwner? = null
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var activeImageCapture: ImageCapture? = null
 
     @Volatile
     private var closed = false
@@ -44,9 +42,6 @@ class CameraCaptureController(
     @Volatile
     private var captureInFlight = false
 
-    // The phone's current physical rotation, read from the accelerometer so it is correct even when
-    // the phone is fixed in a mount with auto-rotate locked. Feeds ImageCapture.targetRotation so a
-    // phone mounted 90° anti-clockwise still produces an upright frame for display and detection.
     @Volatile
     private var deviceRotation: Int = Surface.ROTATION_0
 
@@ -62,7 +57,6 @@ class CameraCaptureController(
         }
     }
 
-    /** Provide the [LifecycleOwner] (the service) that CameraX binds the capture use case to. */
     fun attach(owner: LifecycleOwner) {
         lifecycleOwner = owner
         ContextCompat.getMainExecutor(context).execute {
@@ -71,43 +65,51 @@ class CameraCaptureController(
     }
 
     /**
-     * Bind the camera, take one picture, analyze it, then unbind so the sensor powers down.
-     * Safe to call from any thread; CameraX provider/binding work is marshaled to the main thread.
+     * Instantly capture a frame. Reuses warm bound ImageCapture pipeline for ~30ms repeated captures.
      */
     fun capture() {
         if (closed || captureInFlight) return
         val owner = lifecycleOwner ?: return
         captureInFlight = true
 
-        val providerFuture = ProcessCameraProvider.getInstance(context)
-        providerFuture.addListener(
-            {
-                if (closed) {
-                    captureInFlight = false
-                    return@addListener
-                }
-                runCatching {
-                    val provider = providerFuture.get()
-                    val capture = buildImageCapture()
-                    provider.unbindAll()
-                    provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, capture)
-                    takePicture(provider, capture)
-                }.onFailure { error ->
-                    captureInFlight = false
-                    onError("Camera failed to start: ${error.message ?: error::class.java.simpleName}")
-                }
-            },
-            ContextCompat.getMainExecutor(context),
-        )
+        val provider = cameraProvider
+        val currentCapture = activeImageCapture
+
+        if (provider != null && currentCapture != null) {
+            // Fast path: Camera pipeline is already warm and bound! Capture immediately (~30ms).
+            takePictureInternal(currentCapture)
+        } else {
+            // Cold start path: Bind camera once to lifecycle.
+            val providerFuture = ProcessCameraProvider.getInstance(context)
+            providerFuture.addListener(
+                {
+                    if (closed) {
+                        captureInFlight = false
+                        return@addListener
+                    }
+                    runCatching {
+                        val p = providerFuture.get()
+                        cameraProvider = p
+                        val newCapture = buildImageCapture()
+                        p.unbindAll()
+                        p.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, newCapture)
+                        activeImageCapture = newCapture
+                        takePictureInternal(newCapture)
+                    }.onFailure { error ->
+                        captureInFlight = false
+                        onError("Camera failed to start: ${error.message ?: error::class.java.simpleName}")
+                    }
+                },
+                ContextCompat.getMainExecutor(context),
+            )
+        }
     }
 
-    /** Alias kept for the debug "Capture now" control. */
     fun captureNow() = capture()
 
     private fun buildImageCapture(): ImageCapture =
         ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            // Force 4:3 frames at the source so the capture box and detections share that ratio.
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setResolutionSelector(
                 ResolutionSelector.Builder()
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
@@ -116,17 +118,13 @@ class CameraCaptureController(
             .build()
             .also {
                 it.flashMode = ImageCapture.FLASH_MODE_OFF
-                // There is no display in a headless service, so derive the target rotation from the
-                // phone's physical orientation. CameraX writes the matching EXIF tag, and
-                // rotateFromExif then produces an upright frame regardless of how the phone is mounted.
                 it.targetRotation = deviceRotation
             }
 
-    private fun takePicture(provider: ProcessCameraProvider, capture: ImageCapture) {
+    private fun takePictureInternal(capture: ImageCapture) {
         val photoFile = runCatching {
             File.createTempFile("rewatt-exposure-", ".jpg", context.cacheDir)
         }.getOrElse { error ->
-            unbind(provider)
             captureInFlight = false
             notifyCaptureFailure("Camera capture failed: ${error.message ?: error::class.java.simpleName}")
             return
@@ -140,21 +138,18 @@ class CameraCaptureController(
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                         try {
-                            analyzeSavedImage(photoFile)
+                            processSavedImageAsync(photoFile)
                         } catch (error: Throwable) {
+                            captureInFlight = false
+                            photoFile.delete()
                             notifyCaptureFailure(
                                 "Camera analysis failed: ${error.message ?: error::class.java.simpleName}",
                             )
-                        } finally {
-                            photoFile.delete()
-                            unbind(provider)
-                            captureInFlight = false
                         }
                     }
 
                     override fun onError(exception: ImageCaptureException) {
                         photoFile.delete()
-                        unbind(provider)
                         captureInFlight = false
                         notifyCaptureFailure(
                             "Camera image capture failed: ${exception.message ?: exception::class.java.simpleName}",
@@ -164,38 +159,44 @@ class CameraCaptureController(
             )
         }.onFailure { error ->
             photoFile.delete()
-            unbind(provider)
             captureInFlight = false
             notifyCaptureFailure("Camera image capture failed: ${error.message ?: error::class.java.simpleName}")
         }
     }
 
-    /** Unbind on the main thread so the camera sensor powers down until the next capture. */
-    private fun unbind(provider: ProcessCameraProvider) {
-        ContextCompat.getMainExecutor(context).execute {
-            runCatching { provider.unbindAll() }
-        }
-    }
-
     override fun close() {
         closed = true
+        captureInFlight = false
         lifecycleOwner = null
         runCatching { orientationListener.disable() }
-        runCatching {
-            val future = ProcessCameraProvider.getInstance(context)
-            future.addListener({ runCatching { future.get().unbindAll() } }, ContextCompat.getMainExecutor(context))
+        ContextCompat.getMainExecutor(context).execute {
+            runCatching {
+                cameraProvider?.unbindAll()
+                cameraProvider = null
+                activeImageCapture = null
+            }
         }
         analysisExecutor.shutdownNow()
     }
 
-    private fun analyzeSavedImage(photoFile: File) {
-        if (closed) return
+    private fun processSavedImageAsync(photoFile: File) {
+        if (closed) {
+            photoFile.delete()
+            captureInFlight = false
+            return
+        }
+
         val exposureReading = runCatching {
             ExposureValueCalculator.fromExif(photoFile.absolutePath)
         }.getOrNull()
+
         val bitmap = BitmapFactory.decodeFile(photoFile.absolutePath)
             ?.rotateFromExif(photoFile.absolutePath)
+
+        photoFile.delete()
+
         if (bitmap == null) {
+            captureInFlight = false
             onFrameAnalyzed(
                 null,
                 emptyList(),
@@ -206,26 +207,34 @@ class CameraCaptureController(
             return
         }
 
-        // Show the frame right away; detection (tiled inference) can take a few seconds.
+        // 1. Publish preview frame to UI immediately (~30ms)!
         onFramePreview(bitmap, exposureReading, exposureReading.toExposureMessage())
 
-        val yoloDetector = yoloDetectorProvider()
-        val detections = yoloDetector?.detect(bitmap).orEmpty()
-        val personCount = detections.count { it.isPerson }
-        val message = if (yoloDetector == null) {
-            "Captured frame; YOLO is still loading."
-        } else if (detections.isEmpty()) {
-            "No people detected above the confidence threshold."
-        } else {
-            "People detected: $personCount."
+        // 2. UNLOCK captureInFlight IMMEDIATELY so user can tap Test Capture again right away!
+        captureInFlight = false
+
+        // 3. Run slow YOLO detection asynchronously in background without blocking capture lock!
+        analysisExecutor.execute {
+            if (closed) return@execute
+            val yoloDetector = yoloDetectorProvider()
+            val detections = yoloDetector?.detect(bitmap).orEmpty()
+            val personCount = detections.count { it.isPerson }
+            val message = if (yoloDetector == null) {
+                "Captured frame; YOLO is still loading."
+            } else if (detections.isEmpty()) {
+                "No people detected above the confidence threshold."
+            } else {
+                "People detected: $personCount."
+            }
+
+            onFrameAnalyzed(
+                bitmap,
+                detections,
+                message,
+                exposureReading,
+                exposureReading.toExposureMessage(),
+            )
         }
-        onFrameAnalyzed(
-            bitmap,
-            detections,
-            message,
-            exposureReading,
-            exposureReading.toExposureMessage(),
-        )
     }
 
     private fun notifyCaptureFailure(message: String) {
